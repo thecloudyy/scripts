@@ -22,8 +22,22 @@
 -- 10. FriendButton chain nil-guarded.
 -- 11. Removed dead loadstring + profanity attribute names.
 
+local function getEnvTable(): any
+	local ok, res = pcall(function()
+		local f = (rawget(_G, "getgenv") :: any)
+		if typeof(f) == "function" then
+			return f()
+		end
+		return (_G :: any)
+	end)
+	if ok and typeof(res) == "table" then
+		return res
+	end
+	return (_G :: any)
+end
+
 local function getConfig<T>(key: string, fallback: T): T
-	local gv = (getgenv and getgenv() or _G) :: any
+	local gv = getEnvTable()
 	if gv and gv[key] ~= nil then
 		return gv[key] :: T
 	end
@@ -65,19 +79,16 @@ local function makeGradient(): UIGradient
 end
 
 local function tryCopy(text: string)
-	local copyFn = rawget(getgenv and getgenv() or {}, "setclipboard") or (_G and rawget(_G, "setclipboard"))
+	local envTbl = getEnvTable()
+	local copyFn = envTbl and (envTbl :: any).setclipboard
 	if typeof(copyFn) ~= "function" then
-		local ok = pcall(function()
-			return setclipboard :: any
-		end)
-		if not ok then
-			return false
-		end
+		copyFn = (rawget(_G, "setclipboard") :: any)
 	end
-	local ok = pcall(function()
-		(setclipboard :: any)(text)
-	end)
-	return ok
+	if typeof(copyFn) == "function" then
+		local ok = pcall(copyFn, text)
+		return ok
+	end
+	return false
 end
 
 local function unspectate(icon: TextLabel?)
