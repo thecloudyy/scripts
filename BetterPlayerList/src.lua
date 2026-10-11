@@ -462,7 +462,16 @@ local function wireEntry(entry)
 end
 
 local function getTeamsList(root)
-	local ok, res = pcall(function()
+	-- New Roblox PlayerList hierarchy changes often; try the old deep path
+	-- first, then fall back to a recursive search. Never throws.
+	local found = nil
+	pcall(function()
+		found = root:FindFirstChild("OffsetUndoFrame", true)
+	end)
+	if found then
+		return found
+	end
+	pcall(function()
 		local a = root:WaitForChild("OffsetFrame", 5)
 		local b = a:WaitForChild("PlayerScrollList", 5)
 		local c = b:WaitForChild("SizeOffsetFrame", 5)
@@ -470,12 +479,9 @@ local function getTeamsList(root)
 		local e = d:WaitForChild("ScrollingFrameClippingFrame", 5)
 		local f = e:WaitForChild("ScrollingFrame", 5)
 		local g = f:WaitForChild("OffsetUndoFrame", 5)
-		return g
+		found = g
 	end)
-	if ok and res then
-		return res
-	end
-	return nil
+	return found
 end
 
 local function bindChildrenContainer(children)
@@ -484,19 +490,44 @@ local function bindChildrenContainer(children)
 	disconnectConn(dropdownConn)
 	dropdownConn = nil
 
-	TeamsList = getTeamsList(children)
-	if TeamsList then
-		for _, teamFrame in ipairs(TeamsList:GetChildren()) do
-			if teamFrame:IsA("Frame") then
-				for _, entry in ipairs(teamFrame:GetChildren()) do
-					task.spawn(wireEntry, entry)
-				end
+	-- Wire everything found right now (no dependency on exact hierarchy).
+	pcall(function()
+		for _, entry in ipairs(children:GetDescendants()) do
+			if type(entry.Name) == "string" and string.find(entry.Name, "PlayerEntry") then
+				task.spawn(wireEntry, entry)
 			end
 		end
-		teamsConn = TeamsList.DescendantAdded:Connect(function(d)
-			task.spawn(wireEntry, d)
+	end)
+
+	TeamsList = getTeamsList(children)
+	if TeamsList then
+		local ok = pcall(function()
+			for _, teamFrame in ipairs(TeamsList:GetChildren()) do
+				if teamFrame:IsA("Frame") then
+					for _, entry in ipairs(teamFrame:GetChildren()) do
+						task.spawn(wireEntry, entry)
+					end
+				end
+			end
+		end)
+		if not ok then
+			TeamsList = nil
+		end
+	end
+	if TeamsList then
+		pcall(function()
+			teamsConn = TeamsList.DescendantAdded:Connect(function(d)
+				task.spawn(wireEntry, d)
+			end)
 		end)
 	end
+
+	-- Always watch the whole subtree so path changes can't break wiring.
+	pcall(function()
+		teamsConn = children.DescendantAdded:Connect(function(d)
+			task.spawn(wireEntry, d)
+		end)
+	end)
 
 	dropdownConn = children.DescendantAdded:Connect(function(d)
 		if d.Name == "PlayerDropDown" then
