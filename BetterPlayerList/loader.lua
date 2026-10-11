@@ -1,8 +1,13 @@
 -- BetterPlayerList / loader.lua (single loadstring entrypoint)
+-- Configuration: set any of these BEFORE loading to override the defaults.
 local _g = getgenv and getgenv() or _G
+-- -- Color of your own name in the player list.
 _g.SELFNAME_COLOR = _g.SELFNAME_COLOR or Color3.fromRGB(255, 92, 92)
+-- -- Header background image (300x65 px). Set to "" to disable.
 _g.BACKGROUND_IMG = _g.BACKGROUND_IMG or "rbxassetid://125749318579873"
+-- -- Font used for your own name.
 _g.SELF_FONT = _g.SELF_FONT or Font.new("rbxassetid://12187366846", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+-- -- Overlay image behind your own entry. Set to "" to disable.
 _g.SELF_IMAGEPLATE = _g.SELF_IMAGEPLATE or "rbxassetid://89567791746513"
 
 local URL = "https://raw.githubusercontent.com/thecloudyy/scripts/main/BetterPlayerList/src.lua"
