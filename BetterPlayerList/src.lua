@@ -22,11 +22,22 @@
 -- 10. FriendButton chain nil-guarded.
 -- 11. Removed dead loadstring + profanity attribute names.
 
+local function getConfig<T>(key: string, fallback: T): T
+	local gv = (getgenv and getgenv() or _G) :: any
+	if gv and gv[key] ~= nil then
+		return gv[key] :: T
+	end
+	return fallback
+end
+
 local CONFIG = {
-	BackgroundImg = "", -- rbxassetid://... or "" to skip
-	SelfNameColor = Color3.fromRGB(255, 170, 0),
-	SelfImagePlate = "", -- rbxassetid://... or "" to skip custom overlay
-	SelfFont = Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
+	BackgroundImg = getConfig("BACKGROUND_IMG", ""),
+	SelfNameColor = getConfig("SELFNAME_COLOR", Color3.fromRGB(255, 170, 0)),
+	SelfImagePlate = getConfig("SELF_IMAGEPLATE", ""),
+	SelfFont = getConfig(
+		"SELF_FONT",
+		Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+	),
 }
 
 local CoreGui = game:GetService("CoreGui")
