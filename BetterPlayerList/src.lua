@@ -1,45 +1,23 @@
 -- BetterPlayerList / src.lua
--- Fixed version of the PlayerList customization script.
---
--- Fixes applied:
--- 1. Defines missing globals (BACKGROUND_IMG, SELFNAME_COLOR, SELF_IMAGEPLATE, SELF_FONT)
---    via CONFIG so the script no longer errors on first run. The old
---    loadstring(game:HttpGet(...)) returned `true` and defined nothing.
--- 2. Handles "Children" already existing before ChildAdded fires (race fix).
--- 3. Disconnects old TeamsList / dropdown connections when the list rebuilds
---    (fixes connection leaks).
--- 4. wireEntry no longer captures a stale userId in a closure. The click
---    handler re-parses entry.Name live, so recycled PlayerEntry frames still
---    open the right player.
--- 5. Dropdown setup takes the InnerFrame directly + waits with a timeout
---    instead of `repeat task.wait() until PlayerDropdown` (which could hang).
--- 6. Spectate tracks spectatingUserId, restores camera correctly, resets the
---    eye/eye-slash icon, and auto-unspectates on respawn.
--- 7. GoTo wrapped in pcall; nil-guards for missing Character.
--- 8. setclipboard guarded (nil on normal clients, pcall on executors).
--- 9. UICorner / GoTo / Spectate buttons created once per dropdown instance
---    (instances are destroyed each open, so no cross-open leaks).
--- 10. FriendButton chain nil-guarded.
--- 11. Removed dead loadstring + profanity attribute names.
 
-local function getEnvTable(): any
+local function getEnvTable()
 	local ok, res = pcall(function()
-		local f = (rawget(_G, "getgenv") :: any)
-		if typeof(f) == "function" then
+		local f = rawget(_G, "getgenv")
+		if type(f) == "function" then
 			return f()
 		end
-		return (_G :: any)
+		return _G
 	end)
-	if ok and typeof(res) == "table" then
+	if ok and type(res) == "table" then
 		return res
 	end
-	return (_G :: any)
+	return _G
 end
 
-local function getConfig<T>(key: string, fallback: T): T
+local function getConfig(key, fallback)
 	local gv = getEnvTable()
 	if gv and gv[key] ~= nil then
-		return gv[key] :: T
+		return gv[key]
 	end
 	return fallback
 end
@@ -48,10 +26,7 @@ local CONFIG = {
 	BackgroundImg = getConfig("BACKGROUND_IMG", ""),
 	SelfNameColor = getConfig("SELFNAME_COLOR", Color3.fromRGB(255, 170, 0)),
 	SelfImagePlate = getConfig("SELF_IMAGEPLATE", ""),
-	SelfFont = getConfig(
-		"SELF_FONT",
-		Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
-	),
+	SelfFont = getConfig("SELF_FONT", Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium, Enum.FontStyle.Normal)),
 }
 
 local CoreGui = game:GetService("CoreGui")
@@ -60,15 +35,15 @@ local LocalPlayer = Players.LocalPlayer
 
 local PlayerListGui = CoreGui:WaitForChild("PlayerList")
 
-local TeamsList: Frame?
-local teamsConn: RBXScriptConnection?
-local dropdownConn: RBXScriptConnection?
-local spectateConn: RBXScriptConnection?
+local TeamsList = nil
+local teamsConn = nil
+local dropdownConn = nil
+local spectateConn = nil
 
-local pendingTarget: { isLocal: boolean, userId: number }? = nil
-local spectatingUserId: number? = nil
+local pendingTarget = nil
+local spectatingUserId = nil
 
-local function makeGradient(): UIGradient
+local function makeGradient()
 	local g = Instance.new("UIGradient")
 	g.Rotation = -90
 	g.Color = ColorSequence.new({
@@ -78,31 +53,36 @@ local function makeGradient(): UIGradient
 	return g
 end
 
-local function tryCopy(text: string)
+local function tryCopy(text)
 	local envTbl = getEnvTable()
-	local copyFn = envTbl and (envTbl :: any).setclipboard
-	if typeof(copyFn) ~= "function" then
-		copyFn = (rawget(_G, "setclipboard") :: any)
+	local copyFn = envTbl and envTbl.setclipboard
+	if type(copyFn) ~= "function" then
+		copyFn = rawget(_G, "setclipboard")
 	end
-	if typeof(copyFn) == "function" then
+	if type(copyFn) == "function" then
 		local ok = pcall(copyFn, text)
 		return ok
 	end
 	return false
 end
 
-local function unspectate(icon: TextLabel?)
-	spectatingUserId = nil
-	if spectateConn then
+local function disconnectConn(conn)
+	if conn then
 		pcall(function()
-			(spectateConn :: RBXScriptConnection):Disconnect()
+			conn:Disconnect()
 		end)
-		spectateConn = nil
 	end
+end
+
+local function unspectate(icon)
+	spectatingUserId = nil
+	disconnectConn(spectateConn)
+	spectateConn = nil
 	local cam = workspace.CurrentCamera
 	if cam then
 		cam.CameraType = Enum.CameraType.Custom
-		local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		local myChar = LocalPlayer.Character
+		local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 		if myHum then
 			cam.CameraSubject = myHum
 		end
@@ -112,7 +92,7 @@ local function unspectate(icon: TextLabel?)
 	end
 end
 
-local function makeCopyable(label: TextLabel)
+local function makeCopyable(label)
 	if not label:GetAttribute("BPL_Copyable") then
 		label:SetAttribute("BPL_Copyable", true)
 		label.Active = true
@@ -122,11 +102,12 @@ local function makeCopyable(label: TextLabel)
 		end)
 		label.MouseLeave:Connect(function()
 			label:SetAttribute("BPL_Hovering", false)
-			label.Text = (label:GetAttribute("RealText") :: any) or label.Text
+			local real = label:GetAttribute("RealText")
+			label.Text = real or label.Text
 		end)
-		label.InputBegan:Connect(function(input: InputObject)
+		label.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 then
-				local real = (label:GetAttribute("RealText") :: any) or label.Text
+				local real = label:GetAttribute("RealText") or label.Text
 				if tryCopy(tostring(real)) then
 					label.Text = "Copied!"
 				else
@@ -137,7 +118,8 @@ local function makeCopyable(label: TextLabel)
 						return
 					end
 					if not label:GetAttribute("BPL_Hovering") then
-						label.Text = (label:GetAttribute("RealText") :: any) or label.Text
+						local r2 = label:GetAttribute("RealText")
+						label.Text = r2 or label.Text
 					end
 				end)
 			end
@@ -145,7 +127,7 @@ local function makeCopyable(label: TextLabel)
 	end
 end
 
-local function styleButton(btn: GuiButton)
+local function styleButton(btn)
 	btn.MouseEnter:Connect(function()
 		local hover = btn:FindFirstChild("HoverBackground")
 		if hover and hover:IsA("GuiObject") then
@@ -160,7 +142,7 @@ local function styleButton(btn: GuiButton)
 	end)
 end
 
-local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: number)
+local function setupPlayerDropdown(inner, isLocal, userId)
 	if not inner or not inner:IsDescendantOf(game) then
 		return
 	end
@@ -173,8 +155,8 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 
 	local pad = 8
 	pcall(function()
-		if listLayout and (listLayout :: UIListLayout).Padding then
-			pad = (listLayout :: UIListLayout).Padding.Offset
+		if listLayout and listLayout.Padding then
+			pad = listLayout.Padding.Offset
 			if pad == 0 then
 				pad = 8
 			end
@@ -197,12 +179,6 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		goBtn.Name = "GoToButton"
 		local hover = goBtn:FindFirstChild("HoverBackground")
 		if hover then
-			local t = hover:FindFirstChildOfClass("TextLabel")
-			local ic = hover:FindFirstChildOfClass("TextLabel", true)
-			if t then
-				t.Text = "GoTo"
-			end
-			-- Keep it simple: set first two text descendants if structure differs
 			for _, d in ipairs(hover:GetDescendants()) do
 				if d:IsA("TextLabel") and d.Name == "Text" then
 					d.Text = "GoTo"
@@ -216,12 +192,17 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		styleButton(goBtn)
 		goBtn.MouseButton1Click:Connect(function()
 			local target = pendingTarget
-			local id = target and target.userId or userId
+			local id
+			if target and target.userId then
+				id = target.userId
+			else
+				id = userId
+			end
 			local plr = Players:GetPlayerByUserId(id)
 			local myChar = LocalPlayer.Character
 			if plr and plr.Character and myChar then
 				pcall(function()
-					myChar:PivotTo((plr.Character :: Model):GetPivot())
+					myChar:PivotTo(plr.Character:GetPivot())
 				end)
 			end
 		end)
@@ -231,7 +212,7 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		local specBtn = inspectBtn:Clone()
 		specBtn.Name = "SpectateButton"
 		local hover = specBtn:FindFirstChild("HoverBackground")
-		local icon: TextLabel? = nil
+		local icon = nil
 		if hover then
 			for _, d in ipairs(hover:GetDescendants()) do
 				if d:IsA("TextLabel") and d.Name == "Text" then
@@ -247,12 +228,17 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		styleButton(specBtn)
 		specBtn.MouseButton1Click:Connect(function()
 			local target = pendingTarget
-			local id = target and target.userId or userId
+			local id
+			if target and target.userId then
+				id = target.userId
+			else
+				id = userId
+			end
 			local cam = workspace.CurrentCamera
 			if not cam then
 				return
 			end
-			local iconLabel: TextLabel? = icon
+			local iconLabel = icon
 			if not iconLabel and hover then
 				for _, d in ipairs(hover:GetDescendants()) do
 					if d:IsA("TextLabel") and d.Name == "Icon" then
@@ -266,7 +252,6 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 				unspectate(iconLabel)
 				return
 			end
-			-- switching targets: clear old state first
 			if spectatingUserId then
 				unspectate(nil)
 			end
@@ -282,12 +267,8 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 			if iconLabel then
 				iconLabel.Text = "eye-slash"
 			end
-			if spectateConn then
-				pcall(function()
-					(spectateConn :: RBXScriptConnection):Disconnect()
-				end)
-			end
-			spectateConn = (hum :: Humanoid).Died:Connect(function()
+			disconnectConn(spectateConn)
+			spectateConn = hum.Died:Connect(function()
 				unspectate(iconLabel)
 			end)
 		end)
@@ -306,10 +287,10 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		if friendBtn then
 			local container = friendBtn:FindFirstChild("CurrentButtonContainer")
 			local dropBtn = container and container:FindFirstChild("DropDownButton")
-			local hover = dropBtn and dropBtn:FindFirstChild("HoverBackground")
-			local t = hover and hover:FindFirstChild("Text")
-			if t and t:IsA("TextLabel") then
-				t.Text = "Friend"
+			local hover2 = dropBtn and dropBtn:FindFirstChild("HoverBackground")
+			local t2 = hover2 and hover2:FindFirstChild("Text")
+			if t2 and t2:IsA("TextLabel") then
+				t2.Text = "Friend"
 			end
 		end
 	end
@@ -327,8 +308,8 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 	if headerBg and headerBg:IsA("GuiObject") then
 		if CONFIG.BackgroundImg ~= "" then
 			pcall(function()
-				(headerBg :: GuiObject & { Image: string }).Image = CONFIG.BackgroundImg
-				(headerBg :: ImageLabel).ImageTransparency = 0.1
+				headerBg.Image = CONFIG.BackgroundImg
+				headerBg.ImageTransparency = 0.1
 			end)
 		end
 		if not headerBg:FindFirstChildOfClass("UICorner") then
@@ -351,10 +332,10 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 		local displayName = textFrame:FindFirstChild("DisplayName")
 		if not inner:GetAttribute("BPL_Shrunk") then
 			if playerName and playerName:IsA("GuiObject") then
-				playerName.Size -= UDim2.new(0, 0, 0, 6)
+				playerName.Size = playerName.Size - UDim2.new(0, 0, 0, 6)
 			end
 			if displayName and displayName:IsA("GuiObject") then
-				displayName.Size -= UDim2.new(0, 0, 0, 2)
+				displayName.Size = displayName.Size - UDim2.new(0, 0, 0, 2)
 			end
 			inner:SetAttribute("BPL_Shrunk", true)
 		end
@@ -364,8 +345,16 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 			uid.Parent = textFrame
 		end
 
-		local targetPlr = Players:GetPlayerByUserId(userId)
-		local realName = targetPlr and targetPlr.Name or ((playerName and (playerName :: TextLabel).Text) or tostring(userId))
+		local targetPlr = nil
+		pcall(function()
+			targetPlr = Players:GetPlayerByUserId(userId)
+		end)
+		local realName = tostring(userId)
+		if targetPlr and targetPlr.Name then
+			realName = targetPlr.Name
+		elseif playerName and playerName:IsA("TextLabel") then
+			realName = playerName.Text
+		end
 		local uidLabel = textFrame:FindFirstChild("UserId")
 		if uidLabel and uidLabel:IsA("TextLabel") then
 			uidLabel:SetAttribute("RealText", tostring(userId))
@@ -375,21 +364,20 @@ local function setupPlayerDropdown(inner: Frame, isLocal: boolean, userId: numbe
 			makeCopyable(uidLabel)
 		end
 		if playerName and playerName:IsA("TextLabel") then
-			playerName:SetAttribute("RealText", realName);
-			(playerName :: TextLabel).Text = realName
-			makeCopyable(playerName :: TextLabel)
+			playerName:SetAttribute("RealText", realName)
+			playerName.Text = realName
+			makeCopyable(playerName)
 		end
 	end
 end
 
-local function openDropdownFor(isLocal: boolean, userId: number, root: Instance)
+local function openDropdownFor(isLocal, userId, root)
 	pendingTarget = { isLocal = isLocal, userId = userId }
 	task.spawn(function()
 		local dd = root:WaitForChild("PlayerDropDown", 5)
 		if not dd then
 			return
 		end
-		-- make sure this dropdown belongs to the latest click
 		local current = pendingTarget
 		if not current or current.userId ~= userId then
 			return
@@ -401,12 +389,10 @@ local function openDropdownFor(isLocal: boolean, userId: number, root: Instance)
 	end)
 end
 
-local function wireEntry(entry: Instance)
+local function wireEntry(entry)
 	if not string.find(entry.Name, "PlayerEntry") then
 		return
 	end
-	-- single-wire guard; click handler reads entry.Name live so recycled
-	-- frames still resolve to the correct player
 	if entry:GetAttribute("BPL_Wired") then
 		return
 	end
@@ -417,7 +403,6 @@ local function wireEntry(entry: Instance)
 		return
 	end
 
-	-- self highlight (reads live Name so recycling is safe)
 	local function applySelfStyle()
 		local id = tonumber(string.match(entry.Name, "^PlayerEntry_(%d+)$"))
 		if not id or id ~= LocalPlayer.UserId then
@@ -434,16 +419,18 @@ local function wireEntry(entry: Instance)
 		if icon and icon:IsA("TextLabel") then
 			icon.TextColor3 = CONFIG.SelfNameColor
 			if not icon:FindFirstChildOfClass("UIGradient") then
-				makeGradient().Parent = icon
+				local g1 = makeGradient()
+				g1.Parent = icon
 			end
 		end
 		if nameLabel and nameLabel:IsA("TextLabel") then
 			nameLabel.TextColor3 = CONFIG.SelfNameColor
 			pcall(function()
-				(nameLabel :: TextLabel).FontFace = CONFIG.SelfFont
+				nameLabel.FontFace = CONFIG.SelfFont
 			end)
 			if not nameLabel:FindFirstChildOfClass("UIGradient") then
-				makeGradient().Parent = nameLabel
+				local g2 = makeGradient()
+				g2.Parent = nameLabel
 			end
 		end
 		if CONFIG.SelfImagePlate ~= "" and not content:FindFirstChild("CustomOverlay") then
@@ -474,40 +461,39 @@ local function wireEntry(entry: Instance)
 	end
 end
 
-local function getTeamsList(root: Instance): Frame?
+local function getTeamsList(root)
 	local ok, res = pcall(function()
-		return (((((root:WaitForChild("OffsetFrame", 5):WaitForChild("PlayerScrollList", 5):WaitForChild("SizeOffsetFrame", 5):WaitForChild("ScrollingFrameContainer", 5):WaitForChild("ScrollingFrameClippingFrame", 5):WaitForChild("ScrollingFrame", 5):WaitForChild("OffsetUndoFrame", 5)) :: Instance) :: Frame)
+		local a = root:WaitForChild("OffsetFrame", 5)
+		local b = a:WaitForChild("PlayerScrollList", 5)
+		local c = b:WaitForChild("SizeOffsetFrame", 5)
+		local d = c:WaitForChild("ScrollingFrameContainer", 5)
+		local e = d:WaitForChild("ScrollingFrameClippingFrame", 5)
+		local f = e:WaitForChild("ScrollingFrame", 5)
+		local g = f:WaitForChild("OffsetUndoFrame", 5)
+		return g
 	end)
-	if ok then
-		return res :: Frame
+	if ok and res then
+		return res
 	end
 	return nil
 end
 
-local function bindChildrenContainer(children: Instance)
-	if teamsConn then
-		pcall(function()
-			(teamsConn :: RBXScriptConnection):Disconnect()
-		end)
-		teamsConn = nil
-	end
-	if dropdownConn then
-		pcall(function()
-			(dropdownConn :: RBXScriptConnection):Disconnect()
-		end)
-		dropdownConn = nil
-	end
+local function bindChildrenContainer(children)
+	disconnectConn(teamsConn)
+	teamsConn = nil
+	disconnectConn(dropdownConn)
+	dropdownConn = nil
 
 	TeamsList = getTeamsList(children)
 	if TeamsList then
-		for _, teamFrame in ipairs((TeamsList :: Frame):GetChildren()) do
+		for _, teamFrame in ipairs(TeamsList:GetChildren()) do
 			if teamFrame:IsA("Frame") then
 				for _, entry in ipairs(teamFrame:GetChildren()) do
 					task.spawn(wireEntry, entry)
 				end
 			end
 		end
-		teamsConn = (TeamsList :: Frame).DescendantAdded:Connect(function(d)
+		teamsConn = TeamsList.DescendantAdded:Connect(function(d)
 			task.spawn(wireEntry, d)
 		end)
 	end
@@ -525,7 +511,6 @@ local function bindChildrenContainer(children: Instance)
 	end)
 end
 
--- init: handle already-present Children + future rebuilds
 local existing = PlayerListGui:FindFirstChild("Children")
 if existing then
 	bindChildrenContainer(existing)
@@ -536,15 +521,10 @@ PlayerListGui.ChildAdded:Connect(function(c)
 	end
 end)
 
--- reset spectate state when we respawn
 LocalPlayer.CharacterAdded:Connect(function()
 	if spectatingUserId then
 		spectatingUserId = nil
-		if spectateConn then
-			pcall(function()
-				(spectateConn :: RBXScriptConnection):Disconnect()
-			end)
-			spectateConn = nil
-		end
+		disconnectConn(spectateConn)
+		spectateConn = nil
 	end
 end)
