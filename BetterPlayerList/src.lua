@@ -23,10 +23,10 @@ local function getConfig(key, fallback)
 end
 
 local CONFIG = {
-	BackgroundImg = getConfig("BACKGROUND_IMG", ""),
-	SelfNameColor = getConfig("SELFNAME_COLOR", Color3.fromRGB(255, 170, 0)),
-	SelfImagePlate = getConfig("SELF_IMAGEPLATE", ""),
-	SelfFont = getConfig("SELF_FONT", Font.new("rbxassetid://12187365364", Enum.FontWeight.Medium, Enum.FontStyle.Normal)),
+	BackgroundImg = getConfig("BACKGROUND_IMG", "rbxassetid://125749318579873"),
+	SelfNameColor = getConfig("SELFNAME_COLOR", Color3.fromRGB(255, 92, 92)),
+	SelfImagePlate = getConfig("SELF_IMAGEPLATE", "rbxassetid://89567791746513"),
+	SelfFont = getConfig("SELF_FONT", Font.new("rbxassetid://12187366846", Enum.FontWeight.Medium, Enum.FontStyle.Normal)),
 }
 
 local CoreGui = game:GetService("CoreGui")
